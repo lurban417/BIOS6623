@@ -1,0 +1,69 @@
+---
+title: "Project 3"
+author: "Lauren Urban"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+# Load libraries
+library(dplyr)
+library(caret)
+
+# Load CSV file 
+data <- read.csv("/Users/laurenurban/Downloads/Project3_data.csv")
+
+# View the first few rows 
+head(data)
+
+# Summary statistics
+str(data)
+summary(data)
+```
+
+```{r}
+# Split into training and test sets
+set.seed(123)  
+trainIndex <- createDataPartition(data$progression, p = 0.6, list = FALSE)
+train_data <- data[trainIndex, ]
+test_data <- data[-trainIndex, ]
+
+# Check proportions of `progression` in each set to ensure they are roughly equal
+train_proportion <- prop.table(table(train_data$progression))
+test_proportion <- prop.table(table(test_data$progression))
+
+cat("Proportion of progression in training set:\n")
+print(train_proportion)
+cat("Proportion of progression in test set:\n")
+print(test_proportion)
+```
+
+```{r}
+# Square baseline kidney volume 
+
+train_data <- train_data %>%
+  mutate(tkvht_base_squared = tkvht_base^2)
+
+test_data <- test_data %>%
+  mutate(tkvht_base_squared = tkvht_base^2)
+```
+
+```{r}
+# Z score normalize all variables
+# Z-score normalization for all predictors
+preProc <- preProcess(train_data, method = c("center", "scale"))
+train_data <- predict(preProc, train_data)
+test_data <- predict(preProc, test_data)
+```
+
+```{r}
+# Randomly split data into 5 folds for cross-validation
+
+train_control <- trainControl(method = "cv", number = 5)
+
+```
