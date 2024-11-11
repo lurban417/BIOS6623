@@ -137,7 +137,62 @@ evaluate_classification_model <- function(train_data, test_data, predictors, out
   list(model = model, accuracy = accuracy)
 }
 ```
+# Task 2 Models
+```{r}
+# Ensure the `progression` column is binary (0 for slow, 1 for fast progression)
+# Modify if needed based on your data structure:
+train_data$progression <- ifelse(train_data$progression == "fast", 1, 0)
+test_data$progression <- ifelse(test_data$progression == "fast", 1, 0)
 
+# Model 1: Baseline kidney volume only
+predictors_model1 <- "tkvht_base"
 
+# Model 2: Image features only
+predictors_model2 <- image_features
 
+# Model 3: Baseline kidney volume + image features
+predictors_model3 <- c("tkvht_base", image_features)
 
+# Define a function to train and evaluate a logistic regression model
+evaluate_classification_model <- function(train_data, test_data, predictors, outcome) {
+  # Define the formula
+  formula <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + ")))
+  
+  # Fit logistic regression model
+  model <- glm(formula, data = train_data, family = binomial)
+  
+  # Predict probabilities on test data
+  test_probs <- predict(model, newdata = test_data, type = "response")
+  
+  # Convert probabilities to binary predictions
+  test_preds <- ifelse(test_probs > 0.5, 1, 0)
+  
+  # Calculate accuracy
+  accuracy <- mean(test_preds == test_data[[outcome]])
+  
+  list(model = model, accuracy = accuracy)
+}
+
+# Define the outcome variable
+outcome_var <- "progression"
+
+# Model 1: Baseline kidney volume only
+model1 <- evaluate_classification_model(train_data, test_data, predictors_model1, outcome_var)
+cat("Model 1 Accuracy (Baseline kidney volume only):", model1$accuracy, "\n")
+
+# Model 2: Image features only
+model2 <- evaluate_classification_model(train_data, test_data, predictors_model2, outcome_var)
+cat("Model 2 Accuracy (Image features only):", model2$accuracy, "\n")
+
+# Model 3: Baseline kidney volume + Image features
+model3 <- evaluate_classification_model(train_data, test_data, predictors_model3, outcome_var)
+cat("Model 3 Accuracy (Baseline kidney volume + Image features):", model3$accuracy, "\n")
+
+# Compare accuracy values in a data frame
+accuracy_values <- data.frame(
+  Model = c("Baseline kidney volume only", "Image features only", "Baseline + Image features"),
+  Accuracy = c(model1$accuracy, model2$accuracy, model3$accuracy)
+)
+
+print(accuracy_values)
+```
