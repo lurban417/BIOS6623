@@ -9,6 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Data Read In and Summary Statistics
 ```{r}
 
 # Load libraries
@@ -25,7 +26,7 @@ head(data)
 str(data)
 summary(data)
 ```
-
+# Split data into training and test sets
 ```{r}
 # Split into training and test sets
 set.seed(123)  
@@ -43,6 +44,7 @@ cat("Proportion of progression in test set:\n")
 print(test_proportion)
 ```
 
+# Square baseline kidney volume
 ```{r}
 
 # Square baseline kidney volume 
@@ -53,6 +55,7 @@ test_data <- test_data %>%
   mutate(tkvht_base_squared = tkvht_base^2)
 ```
 
+# Z score normalize all variables
 ```{r}
 
 # Z score normalize all variables
@@ -61,12 +64,14 @@ train_data <- predict(preProc, train_data)
 test_data <- predict(preProc, test_data)
 ```
 
+# Cross validation 
 ```{r}
 
 # Randomly split data into 5 folds for cross-validation
 train_control <- trainControl(method = "cv", number = 5)
 ```
 
+# Task 1 Models
 ```{r}
 # Task 1
 
