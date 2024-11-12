@@ -1,0 +1,275 @@
+---
+title: "Project 3"
+author: "Lauren Urban"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load Packages 
+```{r}
+library(tidyverse)
+library(lmtest)
+library(gtsummary)
+library(apaTables)
+library(broom)
+library(utils)
+library(finalfit)
+library(interactions)
+library(randomizr)
+library(dplyr) 
+library(caret)
+library(gt)
+library(moments)
+library(tidyr)
+```
+
+# Data Read In and Summary Statistics
+```{r}
+# Load CSV 
+data <- read.csv("/Users/laurenurban/Downloads/Project3_data.csv")
+
+# View the first few rows 
+head(data)
+
+# Summary statistics
+str(data)
+summary(data)
+```
+
+# Descriptive Statistics
+
+```{r}
+# Select relevant numeric variables (excluding gabor, txti, and lbp variables)
+selected_data <- data %>%
+  select(starts_with("geom"), starts_with("glcm"),
+         tkvht_base, tkvht_visit2, tkvht_change)
+
+# Generate descriptive statistics
+detailed_summary <- selected_data %>%
+  summarise(across(everything(), list(
+    mean = ~mean(., na.rm = TRUE),
+    sd = ~sd(., na.rm = TRUE),
+    min = ~min(., na.rm = TRUE),
+    max = ~max(., na.rm = TRUE),
+    median = ~median(., na.rm = TRUE),
+    skewness = ~skewness(., na.rm = TRUE),
+    kurtosis = ~kurtosis(., na.rm = TRUE)
+  )))
+
+# Reshape the table for better presentation (long format)
+detailed_summary_long <- detailed_summary %>%
+  pivot_longer(cols = everything(),
+               names_to = c("Variable", "Statistic"),
+               names_sep = "_",
+               values_to = "Value")
+
+# Handle duplicates by summarizing with the first value (or any other appropriate function)
+condensed_summary <- detailed_summary_long %>%
+  pivot_wider(names_from = Statistic, values_from = Value, values_fn = list(~ first(.)))
+
+# Format the table with gt for presentation
+formatted_table <- condensed_summary %>%
+  gt() %>%
+  tab_header(
+    title = "Descriptive Statistics for Selected Numeric Variables"
+  ) %>%
+  cols_label(
+    Variable = "Variable",
+    mean = "Mean",
+    sd = "Standard Deviation",
+    min = "Min",
+    max = "Max",
+    median = "Median",
+    skewness = "Skewness",
+    kurtosis = "Kurtosis"
+  ) %>%
+  tab_style(
+    style = list(
+      cell_borders(sides = "all", weight = 1)
+    ),
+    locations = cells_body()
+  )
+
+# View the table
+print(formatted_table)
+
+# Write the summary statistics to a CSV file
+write.csv(condensed_summary, "/Users/laurenurban/Downloads/condensed_descriptive_statistics.csv", row.names = FALSE)
+```
+
+# Split data into training and test sets
+```{r}
+# Split into training and test sets
+set.seed(123)  
+trainIndex <- createDataPartition(data$progression, p = 0.6, list = FALSE)
+train_data <- data[trainIndex, ]
+test_data <- data[-trainIndex, ]
+
+# Check proportions of progression in each set to make sure they are ~ equal
+train_proportion <- prop.table(table(train_data$progression))
+test_proportion <- prop.table(table(test_data$progression))
+
+cat("Proportion of progression in training set:\n")
+print(train_proportion)
+cat("Proportion of progression in test set:\n")
+print(test_proportion)
+```
+
+# Square baseline kidney volume
+```{r}
+
+# Square baseline kidney volume 
+train_data <- train_data %>%
+  mutate(tkvht_base_squared = tkvht_base^2)
+
+test_data <- test_data %>%
+  mutate(tkvht_base_squared = tkvht_base^2)
+```
+
+# Z score normalize all variables
+```{r}
+
+# Z score normalize all variables
+preProc <- preProcess(train_data, method = c("center", "scale"))
+train_data <- predict(preProc, train_data)
+test_data <- predict(preProc, test_data)
+```
+
+# Cross validation 
+```{r}
+
+# Randomly split data into 5 folds for cross-validation
+train_control <- trainControl(method = "cv", number = 5)
+```
+
+# Task 1 Models
+```{r}
+# Model 1: Baseline kidney volume only
+predictors_model1 <- "tkvht_base"
+
+# Model 2: Image features only
+image_features <- grep("^(geom|gabor|glcm|txti|lbp)", colnames(data), value = TRUE)
+predictors_model2 <- image_features
+
+# Model 3: Baseline kidney volume + image features
+predictors_model3 <- c("tkvht_base", image_features)
+
+# Define a function to train and evaluate a linear regression model
+evaluate_model <- function(train_data, test_data, predictors, outcome) {
+  formula <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + ")))
+  model <- lm(formula, data = train_data)
+  
+  # Predict on test data
+  predictions <- predict(model, newdata = test_data)
+  
+  ### Calculate RMSE (Root Mean Square Error) for performance evaluation
+  rmse <- sqrt(mean((test_data[[outcome]] - predictions)^2))
+
+  print(model)
+  list(model = model, rmse = rmse)
+}
+
+# Train and evaluate each model
+outcome_var <- "tkvht_change"
+
+# Model 1
+model1 <- evaluate_model(train_data, test_data, predictors_model1, outcome_var)
+cat("Model 1 RMSE (Baseline Kidney volume):", model1$rmse, "\n")
+
+# Model 2
+model2 <- evaluate_model(train_data, test_data, predictors_model2, outcome_var)
+cat("Model 2 RMSE (Image features only):", model2$rmse, "\n")
+
+# Model 3
+model3 <- evaluate_model(train_data, test_data, predictors_model3, outcome_var)
+cat("Model 3 RMSE (Baseline kidney volume + Image features):", model3$rmse, "\n")
+
+# Compare RMSE values
+rmse_values <- data.frame(
+  Model = c("Baseline kidney volume only", "Image features only", "Baseline + Image features"),
+  RMSE = c(model1$rmse, model2$rmse, model3$rmse)
+)
+
+print(rmse_values)
+```
+
+```{r}
+# Define a function to train and evaluate a logistic regression model
+evaluate_classification_model <- function(train_data, test_data, predictors, outcome) {
+  formula <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + ")))
+  model <- glm(formula, data = train_data, family = binomial)
+  
+  # Predict on test data
+  test_probs <- predict(model, newdata = test_data, type = "response")
+  test_preds <- ifelse(test_probs > 0.5, 1, 0)
+  
+  # Calculate accuracy for performance evaluation
+  accuracy <- mean(test_preds == test_data[[outcome]])
+  
+  list(model = model, accuracy = accuracy)
+}
+```
+
+# Task 2 Models
+```{r}
+# Ensure the `progression` column is binary (0 for slow, 1 for fast progression)
+# Modify if needed based on your data structure:
+train_data$progression <- ifelse(train_data$progression == "fast", 1, 0)
+test_data$progression <- ifelse(test_data$progression == "fast", 1, 0)
+
+# Model 1: Baseline kidney volume only
+predictors_model1 <- "tkvht_base"
+
+# Model 2: Image features only
+predictors_model2 <- image_features
+
+# Model 3: Baseline kidney volume + image features
+predictors_model3 <- c("tkvht_base", image_features)
+
+# Define a function to train and evaluate a logistic regression model
+evaluate_classification_model <- function(train_data, test_data, predictors, outcome) {
+  # Define the formula
+  formula <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + ")))
+  
+  # Fit logistic regression model
+  model <- glm(formula, data = train_data, family = binomial)
+  
+  # Predict probabilities on test data
+  test_probs <- predict(model, newdata = test_data, type = "response")
+  
+  # Convert probabilities to binary predictions
+  test_preds <- ifelse(test_probs > 0.5, 1, 0)
+  
+  # Calculate accuracy
+  accuracy <- mean(test_preds == test_data[[outcome]])
+  
+  list(model = model, accuracy = accuracy)
+}
+
+# Define the outcome variable
+outcome_var <- "progression"
+
+# Model 1: Baseline kidney volume only
+model1 <- evaluate_classification_model(train_data, test_data, predictors_model1, outcome_var)
+cat("Model 1 Accuracy (Baseline kidney volume only):", model1$accuracy, "\n")
+
+# Model 2: Image features only
+model2 <- evaluate_classification_model(train_data, test_data, predictors_model2, outcome_var)
+cat("Model 2 Accuracy (Image features only):", model2$accuracy, "\n")
+
+# Model 3: Baseline kidney volume + Image features
+model3 <- evaluate_classification_model(train_data, test_data, predictors_model3, outcome_var)
+cat("Model 3 Accuracy (Baseline kidney volume + Image features):", model3$accuracy, "\n")
+
+# Compare accuracy values in a data frame
+accuracy_values <- data.frame(
+  Model = c("Baseline kidney volume only", "Image features only", "Baseline + Image features"),
+  Accuracy = c(model1$accuracy, model2$accuracy, model3$accuracy)
+)
+
+print(accuracy_values)
+```
