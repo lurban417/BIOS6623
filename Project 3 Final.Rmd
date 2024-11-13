@@ -1,0 +1,374 @@
+---
+title: "Project 3 Final"
+author: "Lauren Urban"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load necessary packages
+```{r}
+library(psych)
+library(tidyverse)
+library(lmtest)
+library(gtsummary)
+library(apaTables)
+library(broom)
+library(utils)
+library(finalfit)
+library(interactions)
+library(randomizr)
+library(caret)
+```
+
+# Reading in the data/summary statistics
+```{r}
+# Load CSV 
+adpkd <- read.csv("/Users/laurenurban/Downloads/Project3_data.csv")
+
+# View the first few rows 
+head(adpkd)
+
+# Summary statistics
+str(adpkd)
+summary(adpkd)
+
+# Descriptive statistics
+describe(adpkd)
+```
+
+# Descriptive statistics
+```{r}
+adpkd %>%
+  summarize(
+    # Geometry features
+    mean_geom1 = mean(geom1, na.rm = TRUE),
+    sd_geom1 = sd(geom1, na.rm = TRUE),
+    mean_geom2 = mean(geom2, na.rm = TRUE),
+    sd_geom2 = sd(geom2, na.rm = TRUE),
+
+    # Gabor transform features
+    across(starts_with("gabor"), 
+           list(mean = ~ mean(.x, na.rm = TRUE), 
+                sd = ~ sd(.x, na.rm = TRUE))),
+
+    # Gray level co-occurrence matrix features
+    across(starts_with("glcm"), 
+           list(mean = ~ mean(.x, na.rm = TRUE), 
+                sd = ~ sd(.x, na.rm = TRUE))),
+
+    # Image texture features
+    across(starts_with("txti"), 
+           list(mean = ~ mean(.x, na.rm = TRUE), 
+                sd = ~ sd(.x, na.rm = TRUE))),
+
+    # Local binary pattern features
+    across(starts_with("lbp"), 
+           list(mean = ~ mean(.x, na.rm = TRUE), 
+                sd = ~ sd(.x, na.rm = TRUE))),
+
+    # Kidney volume measurements
+    mean_tkvht_base = mean(tkvht_base, na.rm = TRUE),
+    sd_tkvht_base = sd(tkvht_base, na.rm = TRUE),
+    mean_tkvht_visit2 = mean(tkvht_visit2, na.rm = TRUE),
+    sd_tkvht_visit2 = sd(tkvht_visit2, na.rm = TRUE),
+
+    # Progression status (proportion of fast progression)
+    progression_rate = mean(progression, na.rm = TRUE),
+
+    # Percentage change in kidney volume
+    mean_tkvht_change = mean(tkvht_change, na.rm = TRUE),
+    sd_tkvht_change = sd(tkvht_change, na.rm = TRUE)
+  )
+```
+# Separating data sets
+```{r}
+# Split into training and test sets
+set.seed(123)  
+trainIndex <- createDataPartition(adpkd$progression, p = 0.6, list = FALSE)
+train_data <- adpkd[trainIndex, ]
+test_data <- adpkd[-trainIndex, ]
+
+# Check proportions of progression in each set to make sure they are ~ equal
+train_proportion <- prop.table(table(train_data$progression))
+test_proportion <- prop.table(table(test_data$progression))
+
+cat("Proportion of progression in training set:\n")
+print(train_proportion)
+cat("Proportion of progression in test set:\n")
+print(test_proportion)
+```
+
+# Squaring Baseline Kidney Volume
+```{r}
+# Square baseline kidney volume 
+train_data <- train_data %>%
+  mutate(tkvht_base_squared = tkvht_base^2)
+
+test_data <- test_data %>%
+  mutate(tkvht_base_squared = tkvht_base^2)
+```
+
+# Z-score normalize all variables
+```{r}
+zscore <- function(x, na.rm = T) {
+    (x - mean(x, na.rm = T))/sd(x, na.rm = T)
+}
+
+train_data_z <- test_data |> 
+  mutate(
+    across(
+      c(geom1:tkvht_base, tkvht_base_squared),
+      zscore,
+      .names = "z_{.col}"))
+```
+
+# Look at boxplots and t tests to identify features that differ by progression
+```{r}
+
+# Define feature names for the loop
+feature_names <- c("geom1", "geom2", "gabor1", "gabor2", "gabor3", "tkvht_base", "tkvht_change")
+
+# Loop through each feature and create a boxplot by progression group
+for (feature in feature_names) {
+  p <- ggplot(adpkd, aes(x = factor(progression), y = .data[[feature]])) +
+    geom_boxplot() +
+    labs(x = "Progression (0 = Slow, 1 = Fast)", y = feature) +
+    ggtitle(paste("Boxplot of", feature, "by Progression Group"))
+  
+  print(p)  # This explicitly prints each plot
+}
+
+# Run t-tests for each feature and store results
+t_test_results <- lapply(feature_names, function(feature) {
+  t.test(adpkd[[feature]] ~ adpkd$progression)
+})
+
+# View results for each feature
+t_test_results
+```
+# Cross validation
+```{r}
+# Randomly split data into 5 folds for cross-validation
+control <- trainControl(
+  method = "cv",
+  number = 5
+)
+```
+
+######## Task 1 #########
+```{r}
+# Model 1: Baseline height-corrected total kidney volume as predictor
+model1 <- lm(tkvht_change ~ tkvht_base, data = train_data_z)
+
+# Summarize the model to see the results
+summary(model1)
+
+# Make predictions on the test set
+predictions1 <- predict(model1, newdata = test_data)
+
+# View predictions
+head(predictions1)
+
+# Calculate RMSE (Root Mean Squared Error) for Model 1
+rmse1 <- sqrt(mean((predictions1 - test_data$tkvht_change)^2))
+cat("RMSE for Model 1: ", rmse1, "\n")
+```
+```{r}
+# Model 2: Image features as predictors
+model2 <- lm(tkvht_change ~ geom1 + geom2 + gabor1 + gabor2 + gabor3 + gabor4 + gabor5 + 
+              glcm1 + glcm2 + txti1 + txti2 + txti3 + txti4 + txti5 + 
+              lbp1 + lbp2 + lbp3 + lbp4 + lbp5, 
+              data = train_data_z)
+
+# Summarize the model to see the results
+summary(model2)
+
+# Make predictions on the test set
+predictions2 <- predict(model2, newdata = test_data)
+
+# View predictions
+head(predictions2)
+
+# Calculate RMSE (Root Mean Squared Error) for Model 1
+rmse2 <- sqrt(mean((predictions1 - test_data$tkvht_change)^2))
+cat("RMSE for Model 2: ", rmse1, "\n")
+```
+```{r}
+# Model 3: Both baseline height-corrected total kidney volume and image features as predictors
+model3 <- lm(tkvht_change ~ tkvht_base + geom1 + geom2 + gabor1 + gabor2 + gabor3 + gabor4 + gabor5 + 
+              glcm1 + glcm2 + txti1 + txti2 + txti3 + txti4 + txti5 + 
+              lbp1 + lbp2 + lbp3 + lbp4 + lbp5, 
+              data = train_data_z)
+
+# Summarize the model to see the results
+summary(model3)
+
+# Make predictions on the test set
+predictions3 <- predict(model3, newdata = test_data)
+
+# View predictions
+head(predictions3)
+
+# Calculate RMSE (Root Mean Squared Error) for Model 1
+rmse3 <- sqrt(mean((predictions3 - test_data$tkvht_change)^2))
+cat("RMSE for Model 3: ", rmse1, "\n")
+```
+
+# Model comparison for task 1:
+```{r}
+# Compare R-squared, Adjusted R-squared, AIC, and BIC for all models
+# Model 1 (baseline height-corrected total kidney volume)
+summary(model1)
+
+# Model 2 (image features from MRI)
+summary(model2)
+
+# Model 3 (both baseline total kidney volume and image features)
+summary(model3)
+
+# Compare AIC and BIC
+AIC(model1, model2, model3)
+BIC(model1, model2, model3)
+
+# Compare R-squared for all models
+r_squared <- c(
+  Model1 = summary(model1)$r.squared,
+  Model2 = summary(model2)$r.squared,
+  Model3 = summary(model3)$r.squared
+)
+r_squared
+```
+
+# Checking homoscedasticity
+```{r}
+# Breusch-Pagan test for homoscedasticity (constant variance of residuals)
+bptest(model1)
+bptest(model2)
+bptest(model3)
+```
+
+# Check normality of residuals
+```{r}
+# Shapiro-Wilk test for normality of residuals
+shapiro.test(resid(model1))
+shapiro.test(resid(model2))
+shapiro.test(resid(model3))
+```
+
+######### Task 2 #########
+# Create and compare models using only height-corrected kidney volume at baseline
+```{r}
+prog_tkvht1 <- train(factor(progression) ~ z_tkvht_base,
+                     data = train_data_z,
+                     method = "regLogistic",
+                     maximize = TRUE,
+                     trControl = control
+        )
+
+prog_tkvht1 #best accuracy
+
+prog_tkvht2 <- train(factor(progression) ~ z_tkvht_base_squared,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control
+)
+
+prog_tkvht2
+
+prog_tkvht3 <- train(factor(progression) ~ z_tkvht_base + z_tkvht_base_squared,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control
+)
+
+prog_tkvht3
+```
+
+# Create and compare models using only image features
+```{r}
+prog_images1 <- train(factor(progression) ~ z_gabor2,
+                     data = train_data_z,
+                     method = "regLogistic",
+                     maximize = TRUE,
+                     trControl = control)
+
+prog_images2 <- train(factor(progression) ~ z_txti2,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+prog_images3 <- train(factor(progression) ~ z_lbp3,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+prog_images4 <- train(factor(progression) ~ z_lbp5,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+models1 <- resamples(list(gabor = prog_images1, txti = prog_images2, lbp3 = prog_images3,
+                          lbp5 = prog_images4))
+summary(models1)
+
+prog_images5 <- train(factor(progression) ~ z_gabor2 + z_txti2,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+prog_images6 <- train(factor(progression) ~ z_gabor2 + z_lbp3,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+prog_images7 <- train(factor(progression) ~ z_gabor2 + z_lbp5,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+models2 <- resamples(list(txti = prog_images5, lbp3 = prog_images6, lbp5 = prog_images7))
+summary(models2)
+
+prog_images8 <- train(factor(progression) ~ z_gabor2 + z_txti2 + lbp3,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+prog_images9 <- train(factor(progression) ~ z_gabor2 + z_txti2 + lbp5,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+models3 <- resamples(list(lbp3 = prog_images8, lbp5 = prog_images9))
+summary(models3)
+
+prog_images10 <- train(factor(progression) ~ z_gabor2 + z_txti2 + lbp3 + lbp5,
+                      data = train_data_z,
+                      method = "regLogistic",
+                      maximize = TRUE,
+                      trControl = control)
+
+models4 <- resamples(list(lbp3 = prog_images8, lbp5 = prog_images10))
+summary(models4)
+
+models5 <- resamples(list(one = prog_images1, two = prog_images2, three = prog_images3,
+                           four = prog_images4, five = prog_images5, six = prog_images6,
+                           seven = prog_images7, eight = prog_images8, nine = prog_images9,
+                           ten = prog_images10))
+summary(models5)
+```
+
